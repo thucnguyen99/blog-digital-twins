@@ -32,27 +32,30 @@ function computeReadingTime(content: string): number {
 // ─── Public queries ────────────────────────────────────────────────────────
 
 async function fetchPublicEntries(type?: EntryType, emotionLabel?: EmotionLabel): Promise<Entry[]> {
+  // Single-field WHERE only — avoids composite index requirement on new projects.
+  // future_release entries are handled via a second pass below.
   const now = Timestamp.now()
-  const constraints: Parameters<typeof query>[1][] = [
-    where('visibility', 'in', ['public', 'future_release']),
-    orderBy('createdAt', 'desc'),
+  const [publicSnap, futureSnap] = await Promise.all([
+    getDocs(query(collection(db, 'entries'), where('visibility', '==', 'public'))),
+    getDocs(query(collection(db, 'entries'), where('visibility', '==', 'future_release'))),
+  ])
+
+  let entries = [
+    ...publicSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry),
+    ...futureSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Entry)
+      .filter((e) => e.publishAt != null && e.publishAt.toMillis() <= now.toMillis()),
   ]
-  if (type) constraints.push(where('type', '==', type))
-  if (emotionLabel) constraints.push(where('emotionLabels', 'array-contains', emotionLabel))
 
-  const q = query(collection(db, 'entries'), ...constraints)
-  const snap = await getDocs(q)
-  const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry)
+  // diary hard gate (belt-and-suspenders alongside Security Rules)
+  entries = entries.filter((e) => e.type !== 'diary')
 
-  // Filter out future_release entries whose publishAt is still in the future
-  // and diary entries (hard gate — belt-and-suspenders alongside Security Rules)
-  return all.filter((e) => {
-    if (e.type === 'diary') return false
-    if (e.visibility === 'future_release') {
-      return e.publishAt != null && e.publishAt.toMillis() <= now.toMillis()
-    }
-    return true
-  })
+  // client-side filter + sort — no composite index needed
+  if (type) entries = entries.filter((e) => e.type === type)
+  if (emotionLabel) entries = entries.filter((e) => e.emotionLabels.includes(emotionLabel))
+  entries.sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0))
+
+  return entries
 }
 
 async function fetchEntry(id: string): Promise<Entry | null> {

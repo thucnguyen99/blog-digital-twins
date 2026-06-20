@@ -1,12 +1,21 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useOwnerProfile } from '../../lib/firebase/profile'
 import { usePublicEntries } from '../../lib/firebase/entries'
+import { setMeta, setPageTitle } from '../../lib/meta'
 import PostCard from '../../components/blog/PostCard'
 
 export default function HomePage() {
   const { data: profile } = useOwnerProfile()
   const { data: entries = [] } = usePublicEntries()
   const recent = entries.slice(0, 6)
+  const siteName = profile?.displayName ?? 'Dấu Ấn'
+
+  useEffect(() => {
+    setPageTitle(siteName, siteName)
+    setMeta('og:description', profile?.tagline ?? profile?.bio?.slice(0, 160) ?? '')
+    setMeta('og:type', 'website')
+  }, [siteName, profile])
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-16">

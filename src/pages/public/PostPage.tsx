@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useEntry, usePublicEntries, useIncrementViewCount } from '../../lib/firebase/entries'
+import { setPageTitle, setMeta } from '../../lib/meta'
 import Badge from '../../components/ui/Badge'
 import PostCard from '../../components/blog/PostCard'
 import { markdownComponents } from '../../lib/markdown/directives'
@@ -12,6 +13,14 @@ export default function PostPage() {
   const { id } = useParams<{ id: string }>()
   const { data: entry, isLoading } = useEntry(id ?? '')
   const { mutate: incrementViewCount } = useIncrementViewCount()
+
+  useEffect(() => {
+    if (!entry) return
+    setPageTitle(entry.title)
+    setMeta('og:description', entry.excerpt)
+    if (entry.coverImage) setMeta('og:image', entry.coverImage)
+    setMeta('og:type', 'article')
+  }, [entry])
 
   // Increment view count once per session per entry
   useEffect(() => {

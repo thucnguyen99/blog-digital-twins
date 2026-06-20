@@ -1,4 +1,4 @@
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Timestamp } from 'firebase/firestore'
 import { useEntry, useCreateEntry, useUpdateEntry } from '../../lib/firebase/entries'
@@ -26,8 +26,6 @@ const PRIVATE_TYPES: EntryType[] = ['diary', 'note']
 export default function EditorPage() {
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
-  const tempId = useId()
-
   const { data: existing } = useEntry(id ?? '')
   const { mutateAsync: createEntry } = useCreateEntry()
   const { mutateAsync: updateEntry } = useUpdateEntry()
@@ -173,7 +171,7 @@ export default function EditorPage() {
           </div>
 
           {/* Media */}
-          <MediaUploader entryId={id ?? tempId} onInsert={(md) => setContent((c) => c + '\n' + md)} />
+          <MediaUploader onInsert={(md) => setContent((c) => c + '\n' + md)} />
         </div>
 
         <div className="space-y-6">
