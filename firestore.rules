@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+        && request.auth.uid == "OWNER_UID_PLACEHOLDER";
+    }
+
+    function isPubliclyReadable(entry) {
+      return entry.type != "diary"
+        && (
+          entry.visibility == "public"
+          || (
+            entry.visibility == "future_release"
+            && entry.publishAt != null
+            && entry.publishAt <= request.time
+          )
+        );
+    }
+
+    match /entries/{entryId} {
+      allow read: if isPubliclyReadable(resource.data);
+      allow read: if isOwner();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasAll([
+          'type', 'title', 'content', 'excerpt', 'visibility',
+          'emotionLabels', 'tags', 'peopleTags', 'placeTags',
+          'aiInclude', 'viewCount', 'readingTimeMin', 'createdAt', 'updatedAt'
+        ])
+        && (request.resource.data.type != "diary"
+            || request.resource.data.visibility == "private")
+        && (request.resource.data.visibility != "future_release"
+            || request.resource.data.publishAt != null);
+      allow delete: if isOwner();
+      allow update: if
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewCount'])
+        && request.resource.data.viewCount == resource.data.viewCount + 1;
+    }
+
+    match /profile/owner {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+
+    match /profile/settings {
+      allow read, write: if isOwner();
+    }
+
+    match /snapshots/{snapshotId} {
+      allow read, write: if isOwner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
