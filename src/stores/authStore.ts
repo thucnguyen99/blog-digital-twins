@@ -21,11 +21,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isOwner: false,
 
-  setUser: (user) =>
-    set({
-      user,
-      isOwner: user?.uid === import.meta.env.VITE_OWNER_UID,
-    }),
+  setUser: (user) => {
+    const ownerUid = (import.meta.env.VITE_OWNER_UID ?? '').replace(/^﻿/, '').trim()
+    set({ user, isOwner: !!user && user.uid === ownerUid })
+  },
 
   signInWithGoogle: async () => {
     const provider = new GoogleAuthProvider()
