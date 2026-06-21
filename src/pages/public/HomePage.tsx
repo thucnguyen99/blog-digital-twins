@@ -7,9 +7,8 @@ import PostCard from '../../components/blog/PostCard'
 
 export default function HomePage() {
   const { data: profile } = useOwnerProfile()
-  const { data: entries = [], error: entriesError, isLoading: entriesLoading } = usePublicEntries()
+  const { data: entries = [] } = usePublicEntries()
   const recent = entries.slice(0, 6)
-  const firebaseProject = import.meta.env.VITE_FIREBASE_PROJECT_ID ?? '(not set)'
   const siteName = profile?.displayName ?? 'Dấu Ấn'
 
   useEffect(() => {
@@ -57,11 +56,6 @@ export default function HomePage() {
           </div>
         </section>
       )}
-
-      {/* Temp debug — remove after diagnosis */}
-      <div style={{background:'#f0f0f0',padding:'8px',marginBottom:'16px',fontSize:'12px',fontFamily:'monospace'}}>
-        FB project: {firebaseProject} | entries: {entriesLoading ? 'loading…' : entries.length} | error: {entriesError ? String(entriesError) : 'none'}
-      </div>
 
       {/* Recent posts */}
       {recent.length > 0 && (
