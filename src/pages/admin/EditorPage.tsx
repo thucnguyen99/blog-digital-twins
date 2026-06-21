@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Timestamp } from 'firebase/firestore'
 import { useEntry, useCreateEntry, useUpdateEntry } from '../../lib/firebase/entries'
 import { useEditorStore } from '../../stores/editorStore'
+import { useAuthStore } from '../../stores/authStore'
 import MarkdownEditor from '../../components/admin/MarkdownEditor'
 import VisibilityPicker from '../../components/admin/VisibilityPicker'
 import AIToggle from '../../components/admin/AIToggle'
@@ -30,6 +31,7 @@ export default function EditorPage() {
   const { mutateAsync: createEntry } = useCreateEntry()
   const { mutateAsync: updateEntry } = useUpdateEntry()
   const { setDraft, markSaved, isDirty } = useEditorStore()
+  const { user } = useAuthStore()
 
   const [type, setType] = useState<EntryType>('article')
   const [title, setTitle] = useState('')
@@ -96,14 +98,30 @@ export default function EditorPage() {
       : {}),
   })
 
+  const triggerSkillEvolution = async (entryId: string) => {
+    if (!user || !effectiveAiInclude || effectiveVisibility !== 'public') return
+    try {
+      const idToken = await user.getIdToken()
+      await fetch('/api/evolve-skill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.uid, entryId, idToken }),
+      })
+    } catch {
+      // Non-blocking — skill evolution failure doesn't affect save
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     try {
       if (id) {
         await updateEntry({ id, data: buildPayload() })
+        void triggerSkillEvolution(id)
       } else {
         const ref = await createEntry(buildPayload() as any)
         navigate(`/admin/editor/${ref.id}`, { replace: true })
+        void triggerSkillEvolution(ref.id)
       }
       markSaved()
       setSaveStatus('saved')

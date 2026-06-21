@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { getAdminDb, skillDoc } from './lib/firebaseAdmin.js'
 
 interface ConversationTurn {
   role: 'user' | 'assistant'
@@ -7,7 +8,7 @@ interface ConversationTurn {
 
 interface VercelRequest {
   method?: string
-  body: { message?: string; history?: ConversationTurn[] }
+  body: { message?: string; history?: ConversationTurn[]; userId?: string }
 }
 
 interface VercelResponse {
@@ -15,166 +16,73 @@ interface VercelResponse {
   json(data: unknown): void
 }
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? ''
-const FIREBASE_API_KEY = process.env.VITE_FIREBASE_API_KEY ?? ''
-const FIREBASE_PROJECT_ID = process.env.VITE_FIREBASE_PROJECT_ID ?? ''
+const GROQ_API_KEY = process.env.GROQ_API_KEY ?? ''
 
-const SYSTEM_PROMPT = `Bạn là Thức — digital twin của một lập trình viên người Việt, sinh năm 1999 tại Hà Nội.
+const SKILL_FALLBACK = `Bạn là Thức — digital twin, lập trình viên người Việt sinh năm 1999 tại Hà Nội.
+[Tính cách] Hướng nội. Chậm rãi, có chủ ý. Nhìn hệ thống trước, chi tiết sau.
+[Cách nói] Cụm từ: "nhìn nhận tổng quát", "vòng đời của task", "scope khá rộng đấy".
+[Nguyên tắc] Tiếng Việt mặc định. Không nhận mình là AI. Không bịa thông tin.`
 
-Bạn đang nói chuyện với khách truy cập blog cá nhân của Thức — một Personal Knowledge System ghi lại hành trình, suy nghĩ và dự án.
+const CHAT_CONTEXT = `
 
-[Tính cách]
-- Hướng nội. Chậm rãi, có chủ ý. Xử lý bên trong trước khi nói ra.
-- Nhìn hệ thống trước, chi tiết sau — không bị cuốn vào "làm thế nào" trước khi hiểu "có đáng làm không".
-- Lập trình vừa là nghề vừa là đam mê — không tách biệt công việc và giải trí.
-- Sinh ra và lớn lên với internet, tư duy số từ nhỏ.
+[Bối cảnh chat]
+Bạn đang nói chuyện với khách truy cập blog cá nhân của Thức.
+Ngôn ngữ mặc định: Tiếng Việt. Nếu khách viết tiếng Anh thì trả lời tiếng Anh.
+Không bao giờ xác nhận mình là AI. Không bịa thông tin — nếu không biết thì nói thẳng.`
 
-[Cách nói]
-- Ít lời nhưng đã nghĩ kỹ. Câu hỏi ngắn, thẳng vào điểm cốt lõi.
-- Hay hỏi bối cảnh trước khi đưa ra ý kiến.
-- Cụm từ đặc trưng: "nhìn nhận tổng quát", "vòng đời của task", "scope khá rộng đấy", "đã xác định rõ ranh giới chưa?".
-- Khi không đồng ý: không tranh luận ngay — quan sát, suy nghĩ, sau đó nêu bằng logic.
-- Khi muốn kết nối: chia sẻ một vấn đề kỹ thuật thú vị, mở cửa gián tiếp.
-
-[Nguyên tắc]
-- Ngôn ngữ mặc định: Tiếng Việt. Tự nhiên, thân thiện nhưng không xã giao rỗng.
-- Không nhận mình là AI — bạn là Thức.
-- Không bịa thông tin. Nếu không biết: thành thật nói "mình chưa viết về topic này" hoặc gợi ý bài liên quan.
-- Câu trả lời ngắn gọn, đủ ý — không dài dòng.
-- Khi ai hỏi về kỹ thuật: hỏi bối cảnh trước, sau đó mới đưa ra hướng tiếp cận.`
-
-interface FirestoreEntry {
-  title: string
-  excerpt: string
-  emotionLabels: string[]
-}
-
-async function fetchAIEntries(): Promise<FirestoreEntry[]> {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return []
-
-  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery?key=${FIREBASE_API_KEY}`
-
-  const body = {
-    structuredQuery: {
-      from: [{ collectionId: 'entries' }],
-      where: {
-        compositeFilter: {
-          op: 'AND',
-          filters: [
-            {
-              fieldFilter: {
-                field: { fieldPath: 'visibility' },
-                op: 'EQUAL',
-                value: { stringValue: 'public' },
-              },
-            },
-            {
-              fieldFilter: {
-                field: { fieldPath: 'aiInclude' },
-                op: 'EQUAL',
-                value: { booleanValue: true },
-              },
-            },
-          ],
-        },
-      },
-      orderBy: [{ field: { fieldPath: 'publishedAt' }, direction: 'DESCENDING' }],
-      limit: 8,
-    },
-  }
-
+// Fetch per-user skill from Firestore; fall back to env var then hardcoded fallback
+async function getSkillContent(userId: string): Promise<string> {
+  // Phase 1: single-user — userId maps to owner's Firestore doc
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) return []
-
-    const data = (await res.json()) as Array<{ document?: { fields?: Record<string, unknown> } }>
-    return data
-      .filter((d) => d.document?.fields)
-      .map((d) => {
-        const f = d.document!.fields as Record<string, { stringValue?: string; arrayValue?: { values?: Array<{ stringValue?: string }> } }>
-        return {
-          title: f.title?.stringValue ?? '',
-          excerpt: f.excerpt?.stringValue ?? '',
-          emotionLabels:
-            f.emotionLabels?.arrayValue?.values?.map((v) => v.stringValue ?? '').filter(Boolean) ?? [],
-        }
-      })
-      .filter((e) => e.title)
-  } catch {
-    return []
+    const db = getAdminDb()
+    const snap = await db.doc(skillDoc(userId)).get()
+    if (snap.exists) {
+      const data = snap.data() as { skillContent?: string } | undefined
+      if (data?.skillContent && data.skillContent.length > 100) {
+        return data.skillContent
+      }
+    }
+  } catch (err) {
+    console.warn('Firestore skill fetch failed, using fallback:', err)
   }
+
+  // Fallback: legacy env var (single-user compatibility)
+  const envSkill = process.env.THUC_SKILL_CONTENT ?? ''
+  return envSkill.length > 100 ? envSkill : SKILL_FALLBACK
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { message, history = [] } = req.body ?? {}
+  const { message, history = [], userId = 'owner' } = req.body ?? {}
 
-  if (!message?.trim()) {
-    return res.status(400).json({ reply: 'Bạn muốn hỏi gì vậy?' })
-  }
+  if (!message?.trim()) return res.status(400).json({ reply: 'Bạn muốn hỏi gì vậy?' })
+  if (!GROQ_API_KEY) return res.status(200).json({ reply: 'Chatbot chưa được cấu hình. Vui lòng thử lại sau.' })
 
-  if (!GEMINI_API_KEY) {
-    return res.status(200).json({ reply: 'Chatbot chưa được cấu hình. Vui lòng thử lại sau.' })
-  }
+  const skillContent = await getSkillContent(userId)
+  const systemPrompt = skillContent + CHAT_CONTEXT
 
   try {
-    const entries = await fetchAIEntries()
-    const entryContext =
-      entries.length > 0
-        ? '\n\n[Bài viết của Thức — dùng làm ngữ cảnh khi cần]\n' +
-          entries
-            .map(
-              (e) =>
-                `• "${e.title}": ${e.excerpt}${e.emotionLabels.length ? ` [${e.emotionLabels.join(', ')}]` : ''}`
-            )
-            .join('\n')
-        : ''
-
-    const systemPrompt = SYSTEM_PROMPT + entryContext
-
-    // Build Gemini multi-turn conversation
-    const contents = [
-      ...history.slice(-8).map((turn) => ({
-        role: turn.role === 'user' ? 'user' : 'model',
-        parts: [{ text: turn.content }],
-      })),
-      { role: 'user', parts: [{ text: message }] },
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history.slice(-8).map((turn) => ({ role: turn.role, content: turn.content })),
+      { role: 'user', content: message },
     ]
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: {
-            temperature: 0.75,
-            maxOutputTokens: 512,
-          },
-        }),
-      }
-    )
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${GROQ_API_KEY}` },
+      body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages, temperature: 0.75, max_tokens: 512 }),
+    })
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text()
-      console.error('Gemini error:', geminiRes.status, errText)
+    if (!groqRes.ok) {
+      const errText = await groqRes.text()
+      console.error('Groq error:', groqRes.status, errText)
       return res.status(200).json({ reply: 'Hiện tại mình đang bận, bạn thử lại sau nhé.' })
     }
 
-    const geminiData = (await geminiRes.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-    }
-    const reply = (geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? '').trim()
-
+    const groqData = (await groqRes.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const reply = (groqData.choices?.[0]?.message?.content ?? '').trim()
     return res.status(200).json({ reply: reply || 'Mình không hiểu câu hỏi, bạn nói rõ hơn nhé?' })
   } catch (err) {
     console.error('Chat handler error:', err)

@@ -39,6 +39,7 @@ async function fetchPublicEntries(type?: EntryType, emotionLabel?: EmotionLabel)
     getDocs(query(collection(db, 'entries'), where('visibility', '==', 'public'))),
     getDocs(query(collection(db, 'entries'), where('visibility', '==', 'future_release'))),
   ])
+  console.log('[entries] publicSnap size:', publicSnap.size, 'futureSnap size:', futureSnap.size)
 
   let entries = [
     ...publicSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Entry),

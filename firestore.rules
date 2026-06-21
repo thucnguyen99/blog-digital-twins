@@ -8,15 +8,7 @@ service cloud.firestore {
     }
 
     function isPubliclyReadable(entry) {
-      return entry.type != "diary"
-        && (
-          entry.visibility == "public"
-          || (
-            entry.visibility == "future_release"
-            && entry.publishAt != null
-            && entry.publishAt <= request.time
-          )
-        );
+      return entry.visibility == "public" || entry.visibility == "future_release";
     }
 
     match /entries/{entryId} {
